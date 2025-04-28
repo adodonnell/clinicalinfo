@@ -17,35 +17,48 @@ let currentSortDirection = 'desc';
 let currentPageToken = null;
 
 async function fetchData(searchTerm, phase, status, pageToken = null) {
+    // Validate phase parameter against allowed values
+    const allowedPhases = new Set(['EARLY_PHASE1', 'PHASE1', 'PHASE2', 'PHASE3', 'PHASE4', 'NA']);
+    if (phase && !allowedPhases.has(phase)) {
+        throw new Error(`Invalid phase filter: ${phase}`);
+    }
+
+    // API v2 requires specific parameter formats
     const params = new URLSearchParams({
         pageSize: PAGE_SIZE,
-        fields: 'NCTId,BriefTitle,Phase,OverallStatus,StartDate,PrimaryCompletionDate,LocationCity,LocationFacility',
-        ...(searchTerm && { 'query.term': searchTerm }),
-        ...(phase && { 'filter.phase': phase }),
+        query: searchTerm ? `AREA[Condition]${searchTerm} OR AREA[InterventionName]${searchTerm}` : '',
+        fields: 'NCTId,BriefTitle,Phase,OverallStatus,StartDate,LocationFacility,PrimaryCompletionDate',
+        ...(phase && { 'filter.aggPhases': phase }), // Correct phase filter parameter
         ...(status && { 'filter.overallStatus': status }),
-        sort: `${currentSortDirection === 'desc' ? '-' : ''}${currentSortField}`,
-        ...(pageToken && { pageToken: pageToken })
+        sort: `${currentSortField}:${currentSortDirection}` // API v2 sort format
     });
+
+    // Add page token if available
+    if (pageToken) params.append('pageToken', pageToken);
 
     try {
         loadingIndicator.classList.remove('hidden');
         errorMessageDiv.classList.add('hidden');
         
-        const response = await fetch(`${API_BASE_URL}?${params}`);
+        const apiUrl = `${API_BASE_URL}?${params}`;
+        const response = await fetch(apiUrl);
         
-        // Handle non-JSON responses
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            const text = await response.text();
-            throw new Error(`Unexpected response format: ${text.slice(0, 100)}`);
-        }
-
+        // Handle different response types
+        const responseText = await response.text();
+        
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || `HTTP error ${response.status}`);
+            // Try to parse error details
+            let errorDetails = responseText;
+            try {
+                const errorJson = JSON.parse(responseText);
+                errorDetails = errorJson.message || JSON.stringify(errorJson);
+            } catch {} // eslint-disable-line no-empty
+            
+            throw new Error(`API Error ${response.status}: ${errorDetails}`);
         }
 
-        const data = await response.json();
+        // Parse successful response
+        const data = JSON.parse(responseText);
         currentPageToken = data.nextPageToken || null;
         return data;
 
