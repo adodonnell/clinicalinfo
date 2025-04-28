@@ -1,0 +1,12 @@
+body {
+  font-family: 'Inter', sans-serif;
+}
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 37%, #f0f0f0 63%);
+  animation: loading 1.4s infinite;
+  background-size: 400% 100%;
+}
+@keyframes loading {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
