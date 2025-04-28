@@ -17,7 +17,7 @@ let currentSortDirection = 'desc';
 let currentPageToken = null;
 
 async function fetchData(searchTerm, phase, status, pageToken = null) {
-    // Validate phase parameter against allowed values
+    // Validate phase against allowed values
     const allowedPhases = new Set(['EARLY_PHASE1', 'PHASE1', 'PHASE2', 'PHASE3', 'PHASE4', 'NA']);
     if (phase && !allowedPhases.has(phase)) {
         throw new Error(`Invalid phase filter: ${phase}`);
@@ -26,33 +26,35 @@ async function fetchData(searchTerm, phase, status, pageToken = null) {
     // API v2 requires specific parameter formats
     const params = new URLSearchParams({
         pageSize: PAGE_SIZE,
-        query: searchTerm ? `AREA[Condition]${searchTerm} OR AREA[InterventionName]${searchTerm}` : '',
-        fields: 'NCTId,BriefTitle,Phase,OverallStatus,StartDate,LocationFacility,PrimaryCompletionDate',
-        ...(phase && { 'filter.aggPhases': phase }), // Correct phase filter parameter
+        fields: 'protocolSection.identificationModule.nctId,' +
+                'protocolSection.identificationModule.briefTitle,' +
+                'protocolSection.designModule.phases,' +
+                'protocolSection.statusModule.overallStatus,' +
+                'protocolSection.contactsLocationsModule.locations.facility,' +
+                'protocolSection.contactsLocationsModule.locations.city,' +
+                'protocolSection.statusModule.startDateStruct.date,' +
+                'protocolSection.statusModule.primaryCompletionDateStruct.date',
+        ...(searchTerm && { query: `AREA[Condition]${searchTerm} OR AREA[InterventionName]${searchTerm}` }),
+        ...(phase && { 'filter.aggPhases': phase }),
         ...(status && { 'filter.overallStatus': status }),
-        sort: `${currentSortField}:${currentSortDirection}` // API v2 sort format
+        sort: `${currentSortField}:${currentSortDirection}`
     });
 
-    // Add page token if available
     if (pageToken) params.append('pageToken', pageToken);
 
     try {
         loadingIndicator.classList.remove('hidden');
         errorMessageDiv.classList.add('hidden');
         
-        const apiUrl = `${API_BASE_URL}?${params}`;
-        const response = await fetch(apiUrl);
-        
-        // Handle different response types
+        const response = await fetch(`${API_BASE_URL}?${params}`);
         const responseText = await response.text();
-        
+
         if (!response.ok) {
-            // Try to parse error details
             let errorDetails = responseText;
             try {
                 const errorJson = JSON.parse(responseText);
                 errorDetails = errorJson.message || JSON.stringify(errorJson);
-            } catch {} // eslint-disable-line no-empty
+            } catch {} // Ignore JSON parse errors for error response
             
             throw new Error(`API Error ${response.status}: ${errorDetails}`);
         }
@@ -72,6 +74,40 @@ async function fetchData(searchTerm, phase, status, pageToken = null) {
     }
 }
 
+function renderResults(data) {
+    resultsTableBody.innerHTML = '';
+    
+    if (!data?.studies?.length) {
+        resultsTableBody.innerHTML = `
+            <tr><td colspan="6" class="text-center py-6 text-gray-500">No trials found</td></tr>
+        `;
+        return;
+    }
+
+    data.studies.forEach(study => {
+        const protocol = study.protocolSection;
+        const row = document.createElement('tr');
+        row.className = 'text-sm text-gray-700 hover:bg-blue-50';
+        row.innerHTML = `
+            <td class="font-medium">
+                <a href="https://clinicaltrials.gov/study/${protocol.identificationModule.nctId}" 
+                   target="_blank" 
+                   class="text-indigo-600 hover:underline">
+                    ${protocol.identificationModule.nctId}
+                </a>
+            </td>
+            <td class="max-w-[300px]">${protocol.identificationModule.briefTitle}</td>
+            <td>${protocol.designModule?.phases?.join(', ')?.replace(/PHASE/g, 'Phase ') || 'N/A'}</td>
+            <td>${protocol.statusModule.overallStatus}</td>
+            <td>${protocol.contactsLocationsModule?.locations?.[0]?.city || 'N/A'}</td>
+            <td>${formatDate(protocol.statusModule.startDateStruct?.date)}</td>
+        `;
+        resultsTableBody.appendChild(row);
+    });
+
+    resultsCount.textContent = `Showing ${data.studies.length} results`;
+    renderPagination(data.nextPageToken);
+}
 function renderResults(data) {
     resultsTableBody.innerHTML = '';
     
