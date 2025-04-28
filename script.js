@@ -19,7 +19,7 @@ let currentPageToken = null;
 async function fetchData(searchTerm, phase, status, pageToken = null) {
     const params = new URLSearchParams({
         pageSize: PAGE_SIZE,
-        fields: 'NCTId,BriefTitle,Phase,OverallStatus,LocationCity,LocationFacility,StartDate',
+        fields: 'NCTId,BriefTitle,Phase,OverallStatus,StartDate,PrimaryCompletionDate,LocationCity,LocationFacility',
         ...(searchTerm && { 'query.term': searchTerm }),
         ...(phase && { 'filter.phase': phase }),
         ...(status && { 'filter.overallStatus': status }),
@@ -32,13 +32,20 @@ async function fetchData(searchTerm, phase, status, pageToken = null) {
         errorMessageDiv.classList.add('hidden');
         
         const response = await fetch(`${API_BASE_URL}?${params}`);
-        const responseText = await response.text();
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${responseText}`);
+        
+        // Handle non-JSON responses
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            throw new Error(`Unexpected response format: ${text.slice(0, 100)}`);
         }
 
-        const data = JSON.parse(responseText);
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || `HTTP error ${response.status}`);
+        }
+
+        const data = await response.json();
         currentPageToken = data.nextPageToken || null;
         return data;
 
@@ -49,19 +56,6 @@ async function fetchData(searchTerm, phase, status, pageToken = null) {
         throw error;
     } finally {
         loadingIndicator.classList.add('hidden');
-    }
-}
-
-function formatDate(dateStr) {
-    if (!dateStr) return 'N/A';
-    try {
-        const [year, month] = dateStr.split('-');
-        return new Date(year, month - 1).toLocaleDateString('en-US', { 
-            year: 'numeric', 
-            month: 'short' 
-        });
-    } catch {
-        return dateStr;
     }
 }
 
