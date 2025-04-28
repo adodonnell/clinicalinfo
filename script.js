@@ -1,207 +1,187 @@
-const form = document.getElementById('search-form');
-const searchTermInput = document.getElementById('search-term');
-const phaseFilter = document.getElementById('filter-phase');
-const statusFilter = document.getElementById('filter-status');
-const resultsTableBody = document.getElementById('results-table-body');
-const resultsCount = document.getElementById('results-count');
-const loadingIndicator = document.getElementById('loading');
-const errorMessageDiv = document.getElementById('error-message');
-const errorTextSpan = document.getElementById('error-text');
-const paginationDiv = document.getElementById('pagination');
-const tableHeaders = document.querySelectorAll('th[data-sort]');
+document.addEventListener('DOMContentLoaded', () => {
+    const searchForm = document.getElementById('search-form');
+    const searchTermInput = document.getElementById('search-term');
+    const filterPhase = document.getElementById('filter-phase');
+    const filterStatus = document.getElementById('filter-status');
+    const resultsBody = document.getElementById('results-table-body');
+    const loading = document.getElementById('loading');
+    const errorMessage = document.getElementById('error-message');
+    const errorText = document.getElementById('error-text');
+    const resultsCount = document.getElementById('results-count');
+    const paginationDiv = document.getElementById('pagination');
 
-const API_BASE_URL = 'https://clinicaltrials.gov/api/v2/studies';
-const PAGE_SIZE = 25;
-let currentSortField = 'StartDate';
-let currentSortDirection = 'desc';
-let currentPageToken = null;
+    let currentPage = 1;
+    const pageSize = 20;
+    let totalStudies = 0;
+    let sortField = 'NCTId';
+    let sortDirection = 'asc';
 
-async function fetchData(searchTerm, phase, status, pageToken = null) {
-    // Validate phase against allowed values
-    const allowedPhases = new Set(['EARLY_PHASE1', 'PHASE1', 'PHASE2', 'PHASE3', 'PHASE4', 'NA']);
-    if (phase && !allowedPhases.has(phase)) {
-        throw new Error(`Invalid phase filter: ${phase}`);
-    }
-
-    // API v2 requires specific parameter formats
-    const params = new URLSearchParams({
-        pageSize: PAGE_SIZE,
-        fields: 'protocolSection.identificationModule.nctId,' +
-                'protocolSection.identificationModule.briefTitle,' +
-                'protocolSection.designModule.phases,' +
-                'protocolSection.statusModule.overallStatus,' +
-                'protocolSection.contactsLocationsModule.locations.facility,' +
-                'protocolSection.contactsLocationsModule.locations.city,' +
-                'protocolSection.statusModule.startDateStruct.date,' +
-                'protocolSection.statusModule.primaryCompletionDateStruct.date',
-        ...(searchTerm && { query: `AREA[Condition]${searchTerm} OR AREA[InterventionName]${searchTerm}` }),
-        ...(phase && { 'filter.aggPhases': phase }),
-        ...(status && { 'filter.overallStatus': status }),
-        sort: `${currentSortField}:${currentSortDirection}`
+    // Form submission handler
+    searchForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        currentPage = 1;
+        await fetchData();
     });
 
-    if (pageToken) params.append('pageToken', pageToken);
-
-    try {
-        loadingIndicator.classList.remove('hidden');
-        errorMessageDiv.classList.add('hidden');
-        
-        const response = await fetch(`${API_BASE_URL}?${params}`);
-        const responseText = await response.text();
-
-        if (!response.ok) {
-            let errorDetails = responseText;
-            try {
-                const errorJson = JSON.parse(responseText);
-                errorDetails = errorJson.message || JSON.stringify(errorJson);
-            } catch {} // Ignore JSON parse errors for error response
-            
-            throw new Error(`API Error ${response.status}: ${errorDetails}`);
-        }
-
-        // Parse successful response
-        const data = JSON.parse(responseText);
-        currentPageToken = data.nextPageToken || null;
-        return data;
-
-    } catch (error) {
-        console.error('Fetch error:', error);
-        errorTextSpan.textContent = error.message;
-        errorMessageDiv.classList.remove('hidden');
-        throw error;
-    } finally {
-        loadingIndicator.classList.add('hidden');
-    }
-}
-
-function renderResults(data) {
-    resultsTableBody.innerHTML = '';
-    
-    if (!data?.studies?.length) {
-        resultsTableBody.innerHTML = `
-            <tr><td colspan="6" class="text-center py-6 text-gray-500">No trials found</td></tr>
-        `;
-        return;
-    }
-
-    data.studies.forEach(study => {
-        const protocol = study.protocolSection;
-        const row = document.createElement('tr');
-        row.className = 'text-sm text-gray-700 hover:bg-blue-50';
-        row.innerHTML = `
-            <td class="font-medium">
-                <a href="https://clinicaltrials.gov/study/${protocol.identificationModule.nctId}" 
-                   target="_blank" 
-                   class="text-indigo-600 hover:underline">
-                    ${protocol.identificationModule.nctId}
-                </a>
-            </td>
-            <td class="max-w-[300px]">${protocol.identificationModule.briefTitle}</td>
-            <td>${protocol.designModule?.phases?.join(', ')?.replace(/PHASE/g, 'Phase ') || 'N/A'}</td>
-            <td>${protocol.statusModule.overallStatus}</td>
-            <td>${protocol.contactsLocationsModule?.locations?.[0]?.city || 'N/A'}</td>
-            <td>${formatDate(protocol.statusModule.startDateStruct?.date)}</td>
-        `;
-        resultsTableBody.appendChild(row);
-    });
-
-    resultsCount.textContent = `Showing ${data.studies.length} results`;
-    renderPagination(data.nextPageToken);
-}
-function renderResults(data) {
-    resultsTableBody.innerHTML = '';
-    
-    if (!data?.studies?.length) {
-        resultsTableBody.innerHTML = `
-            <tr><td colspan="6" class="text-center py-6 text-gray-500">No trials found</td></tr>
-        `;
-        return;
-    }
-
-    data.studies.forEach(study => {
-        const protocol = study.protocolSection;
-        const row = document.createElement('tr');
-        row.className = 'text-sm text-gray-700 hover:bg-blue-50';
-        row.innerHTML = `
-            <td class="font-medium">
-                <a href="https://clinicaltrials.gov/study/${protocol.identificationModule.nctId}" 
-                   target="_blank" 
-                   class="text-indigo-600 hover:underline">
-                    ${protocol.identificationModule.nctId}
-                </a>
-            </td>
-            <td class="max-w-[300px]">${protocol.identificationModule.briefTitle}</td>
-            <td>${protocol.designModule?.phases?.[0]?.replace('PHASE', 'Phase ') || 'N/A'}</td>
-            <td>${protocol.statusModule.overallStatus}</td>
-            <td>${protocol.contactsLocationsModule?.locations?.[0]?.city || 'N/A'}</td>
-            <td>${formatDate(protocol.statusModule.startDate)}</td>
-        `;
-        resultsTableBody.appendChild(row);
-    });
-
-    resultsCount.textContent = `Showing ${data.studies.length} results`;
-    renderPagination(data.nextPageToken);
-}
-
-function renderPagination(nextToken) {
-    paginationDiv.innerHTML = '';
-    
-    const prevButton = createPaginationButton('Previous', currentPageToken, !currentPageToken);
-    const nextButton = createPaginationButton('Next', nextToken, !nextToken);
-
-    paginationDiv.append(prevButton, nextButton);
-}
-
-function createPaginationButton(label, token, isDisabled) {
-    const button = document.createElement('button');
-    button.textContent = label;
-    button.className = `px-4 py-2 rounded-md ${isDisabled 
-        ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-        : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`;
-    button.disabled = isDisabled;
-    
-    if (!isDisabled) {
-        button.addEventListener('click', () => {
-            fetchData(
-                searchTermInput.value.trim(),
-                phaseFilter.value,
-                statusFilter.value,
-                token
-            ).then(renderResults);
+    // Sort handler
+    document.querySelectorAll('th[data-sort]').forEach(header => {
+        header.style.cursor = 'pointer';
+        header.addEventListener('click', () => {
+            const newSortField = header.getAttribute('data-sort');
+            if (sortField === newSortField) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortField = newSortField;
+                sortDirection = 'asc';
+            }
+            fetchData();
         });
-    }
-    
-    return button;
-}
-
-form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    currentPageToken = null;
-    
-    const data = await fetchData(
-        searchTermInput.value.trim(),
-        phaseFilter.value,
-        statusFilter.value
-    );
-    
-    renderResults(data);
-});
-
-tableHeaders.forEach(header => {
-    header.addEventListener('click', () => {
-        const sortField = header.dataset.sort;
-        
-        if (sortField === currentSortField) {
-            currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
-        } else {
-            currentSortField = sortField;
-            currentSortDirection = 'desc';
-        }
-        
-        fetchData(
-            searchTermInput.value.trim(),
-            phaseFilter.value,
-            statusFilter.value
-        ).then(renderResults);
     });
+
+    async function fetchData() {
+        showLoading();
+        hideError();
+
+        const expr = buildExpr();
+        const encodedExpr = encodeURIComponent(expr);
+        const sortParam = `${sortField}:${sortDirection}`;
+        const minRnk = (currentPage - 1) * pageSize + 1;
+        const maxRnk = currentPage * pageSize;
+
+        const url = `https://clinicaltrials.gov/api/query/study_fields?expr=${encodedExpr}&fields=NCTId,BriefTitle,Phase,OverallStatus,LocationCity,StartDate&min_rnk=${minRnk}&max_rnk=${maxRnk}&sort=${sortParam}&fmt=json`;
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const data = await response.json();
+            
+            if (data.StudyFieldsResponse) {
+                handleResponse(data.StudyFieldsResponse);
+            } else {
+                throw new Error('Invalid API response structure');
+            }
+        } catch (error) {
+            showError(error.message);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    function buildExpr() {
+        let expr = searchTermInput.value.trim();
+        const phase = filterPhase.value;
+        const status = filterStatus.value;
+
+        if (phase) expr += ` AND AREA[Phase]${phase}`;
+        if (status) expr += ` AND AREA[OverallStatus]${status}`;
+
+        return expr || '*'; // Fallback to match all if empty
+    }
+
+    function handleResponse(response) {
+        const studies = response.StudyFields || [];
+        totalStudies = parseInt(response.NStudiesFound) || 0;
+
+        updateResultsCount(totalStudies);
+        renderTable(studies);
+        renderPagination();
+    }
+
+    function renderTable(studies) {
+        resultsBody.innerHTML = studies.length === 0 ? 
+            '<tr><td colspan="6" class="text-center py-6 text-gray-500">No results found</td></tr>' :
+            studies.map(study => {
+                const nctId = study.NCTId?.[0] || 'N/A';
+                const title = study.BriefTitle?.[0] || 'N/A';
+                const phase = study.Phase?.[0] || 'N/A';
+                const status = study.OverallStatus?.[0] || 'N/A';
+                const location = study.LocationCity?.join(', ') || 'N/A';
+                const startDate = study.StartDate?.[0] ? 
+                    new Date(study.StartDate[0]).toLocaleDateString() : 'N/A';
+
+                return `
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-2 text-sm text-gray-700">${nctId}</td>
+                        <td class="px-4 py-2 text-sm text-gray-900">${title}</td>
+                        <td class="px-4 py-2 text-sm text-gray-600">${phase}</td>
+                        <td class="px-4 py-2 text-sm text-gray-600">${status}</td>
+                        <td class="px-4 py-2 text-sm text-gray-600">${location}</td>
+                        <td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>
+                    </tr>
+                `;
+            }).join('');
+    }
+
+    function renderPagination() {
+        paginationDiv.innerHTML = '';
+        const totalPages = Math.ceil(totalStudies / pageSize);
+
+        if (totalPages <= 1) return;
+
+        const maxVisiblePages = 5;
+        let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+        if (endPage - startPage < maxVisiblePages - 1) {
+            startPage = Math.max(1, endPage - maxVisiblePages + 1);
+        }
+
+        // Previous button
+        const prevButton = createPaginationButton('←', currentPage > 1, () => {
+            currentPage--;
+            fetchData();
+        });
+        paginationDiv.appendChild(prevButton);
+
+        // Page numbers
+        for (let i = startPage; i <= endPage; i++) {
+            const button = createPaginationButton(i, true, () => {
+                currentPage = i;
+                fetchData();
+            }, i === currentPage);
+            paginationDiv.appendChild(button);
+        }
+
+        // Next button
+        const nextButton = createPaginationButton('→', currentPage < totalPages, () => {
+            currentPage++;
+            fetchData();
+        });
+        paginationDiv.appendChild(nextButton);
+    }
+
+    function createPaginationButton(text, enabled, onClick, isActive = false) {
+        const button = document.createElement('button');
+        button.textContent = text;
+        button.className = `px-3 py-1 rounded-md transition-colors ${
+            isActive ? 'bg-indigo-600 text-white' : 
+            enabled ? 'bg-gray-200 text-gray-700 hover:bg-gray-300' : 'bg-gray-100 text-gray-400 cursor-default'
+        }`;
+        if (enabled) {
+            button.addEventListener('click', onClick);
+        }
+        return button;
+    }
+
+    function showLoading() {
+        loading.classList.remove('hidden');
+        resultsBody.innerHTML = '<tr><td colspan="6" class="text-center py-6 text-gray-500">Loading...</td></tr>';
+    }
+
+    function hideLoading() {
+        loading.classList.add('hidden');
+    }
+
+    function showError(message) {
+        errorText.textContent = message;
+        errorMessage.classList.remove('hidden');
+    }
+
+    function hideError() {
+        errorMessage.classList.add('hidden');
+    }
+
+    function updateResultsCount(total) {
+        resultsCount.textContent = `${total} ${total === 1 ? 'study' : 'studies'} found`;
+    }
 });
