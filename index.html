@@ -1,18 +1,228 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Clinical Trials Dashboard for searching, filtering and exporting trials easily." />
-  <link rel="stylesheet" href="style.css" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="favicon.ico" type="image/x-icon" />
-  <title>Clinical Trials Dashboard</title>
+    <meta charset="UTF-8">
+    <title>Clinical Trials Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-100 text-gray-900">
-  <div id="app" class="p-4">
-    <!-- Your dashboard content -->
-  </div>
-  <script src="script.js"></script>
+<body class="bg-gray-50 min-h-screen p-8">
+    <div class="max-w-7xl mx-auto bg-white shadow-lg rounded-xl p-6">
+        <h1 class="text-3xl font-bold mb-6 text-center">Clinical Trials Dashboard</h1>
+
+        <!-- Controls -->
+        <div class="grid md:grid-cols-4 gap-4 mb-6">
+            <input id="search" type="text" placeholder="Search by condition, title, or location" class="border p-2 rounded-lg w-full" />
+            <select id="phaseFilter" class="border p-2 rounded-lg w-full">
+                <option value="">All Phases</option>
+                <option value="Phase 1">Phase 1</option>
+                <option value="Phase 2">Phase 2</option>
+                <option value="Phase 3">Phase 3</option>
+                <option value="Phase 4">Phase 4</option>
+            </select>
+            <select id="statusFilter" class="border p-2 rounded-lg w-full">
+                <option value="">All Statuses</option>
+                <option value="Recruiting">Recruiting</option>
+                <option value="Completed">Completed</option>
+                <option value="Withdrawn">Withdrawn</option>
+                <option value="Terminated">Terminated</option>
+            </select>
+            <button id="exportBtn" class="bg-green-500 hover:bg-green-600 text-white rounded-lg p-2 w-full">Export CSV</button>
+        </div>
+
+        <!-- Table -->
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm table-auto">
+                <thead class="bg-gray-100">
+                    <tr>
+                        <th class="p-3 cursor-pointer" data-sort="brief_title">Title</th>
+                        <th class="p-3 cursor-pointer" data-sort="study_phase">Phase</th>
+                        <th class="p-3 cursor-pointer" data-sort="overall_status">Status</th>
+                        <th class="p-3 cursor-pointer" data-sort="location_city">Location</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTable" class="divide-y"></tbody>
+            </table>
+        </div>
+
+        <!-- Loading Skeleton -->
+        <div id="loadingSkeleton" class="grid gap-2 mt-6 hidden">
+            <div class="h-6 bg-gray-200 rounded animate-pulse"></div>
+            <div class="h-6 bg-gray-200 rounded animate-pulse"></div>
+            <div class="h-6 bg-gray-200 rounded animate-pulse"></div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-between items-center mt-6">
+            <button id="prevBtn" class="bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg px-4 py-2">Previous</button>
+            <div id="pageInfo" class="text-gray-700"></div>
+            <button id="nextBtn" class="bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg px-4 py-2">Next</button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "https://clinicaltrials.gov/api/v2/studies";
+        const resultsTable = document.getElementById('resultsTable');
+        const loadingSkeleton = document.getElementById('loadingSkeleton');
+        const searchInput = document.getElementById('search');
+        const phaseFilter = document.getElementById('phaseFilter');
+        const statusFilter = document.getElementById('statusFilter');
+        const exportBtn = document.getElementById('exportBtn');
+        const pageInfo = document.getElementById('pageInfo');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        const tableHeaders = document.querySelectorAll('th[data-sort]');
+
+        let studies = [];
+        let currentPage = 1;
+        let pageSize = 10;
+        let totalPages = 1;
+        let currentSortField = '';
+        let currentSortDirection = 'asc';
+
+        async function fetchData(search = '', phase = '', status = '') {
+            resultsTable.innerHTML = '';
+            loadingSkeleton.classList.remove('hidden');
+
+            try {
+                let query = `?pageSize=100&fields=NCTId,BriefTitle,StudyPhase,OverallStatus,LocationCity,LocationState`;
+
+                if (search) {
+                    const searchTerms = search.split(' ').map(term => `(${encodeURIComponent(term)})`).join(' AND ');
+                    query += `&query.term=${searchTerms}`;
+                }
+                if (phase) query += `&filters.studyPhase=${encodeURIComponent(phase)}`;
+                if (status) query += `&filters.overallStatus=${encodeURIComponent(status)}`;
+
+                const response = await fetch(API_URL + query);
+                const data = await response.json();
+
+                studies = data.studies || [];
+                totalPages = Math.ceil(studies.length / pageSize);
+                currentPage = 1;
+
+                renderTable();
+            } catch (error) {
+                console.error('Error fetching data', error);
+                resultsTable.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-red-500">Error loading data.</td></tr>';
+            } finally {
+                loadingSkeleton.classList.add('hidden');
+            }
+        }
+
+        function renderTable() {
+            resultsTable.innerHTML = '';
+
+            if (studies.length === 0) {
+                resultsTable.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-500">No results found.</td></tr>';
+                pageInfo.textContent = '';
+                return;
+            }
+
+            let sortedStudies = [...studies];
+            if (currentSortField) {
+                sortedStudies.sort((a, b) => {
+                    const valA = (a[currentSortField] || '').toLowerCase();
+                    const valB = (b[currentSortField] || '').toLowerCase();
+                    if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
+                    if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
+                    return 0;
+                });
+            }
+
+            const start = (currentPage - 1) * pageSize;
+            const end = start + pageSize;
+            const pageStudies = sortedStudies.slice(start, end);
+
+            for (const study of pageStudies) {
+                resultsTable.innerHTML += `
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-3">${study.brief_title || 'N/A'}</td>
+                        <td class="p-3">${study.study_phase || 'N/A'}</td>
+                        <td class="p-3">${study.overall_status || 'N/A'}</td>
+                        <td class="p-3">${study.location_city || 'N/A'}, ${study.location_state || ''}</td>
+                    </tr>
+                `;
+            }
+
+            pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+        }
+
+        function updateSortIndicators() {
+            tableHeaders.forEach(header => {
+                header.textContent = header.textContent.replace(/[\u25B2\u25BC]/g, ''); // Remove ▲ ▼
+                if (header.getAttribute('data-sort') === currentSortField) {
+                    header.textContent += currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+                }
+            });
+        }
+
+        // Event listeners
+        searchInput.addEventListener('input', () => {
+            fetchData(searchInput.value.trim(), phaseFilter.value, statusFilter.value);
+        });
+
+        phaseFilter.addEventListener('change', () => {
+            fetchData(searchInput.value.trim(), phaseFilter.value, statusFilter.value);
+        });
+
+        statusFilter.addEventListener('change', () => {
+            fetchData(searchInput.value.trim(), phaseFilter.value, statusFilter.value);
+        });
+
+        prevBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                renderTable();
+            }
+        });
+
+        nextBtn.addEventListener('click', () => {
+            if (currentPage < totalPages) {
+                currentPage++;
+                renderTable();
+            }
+        });
+
+        tableHeaders.forEach(header => {
+            header.addEventListener('click', () => {
+                const newSortField = header.getAttribute('data-sort');
+                if (!newSortField) return;
+
+                if (currentSortField === newSortField) {
+                    currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSortField = newSortField;
+                    currentSortDirection = 'asc';
+                }
+
+                updateSortIndicators();
+                renderTable();
+            });
+        });
+
+        exportBtn.addEventListener('click', () => {
+            if (studies.length === 0) return;
+
+            const csvContent = [
+                ['Title', 'Phase', 'Status', 'Location'],
+                ...studies.map(study => [
+                    `"${study.brief_title || ''}"`,
+                    `"${study.study_phase || ''}"`,
+                    `"${study.overall_status || ''}"`,
+                    `"${study.location_city || ''}, ${study.location_state || ''}"`
+                ])
+            ].map(e => e.join(',')).join('\n');
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'clinical_trials.csv');
+            link.click();
+        });
+
+        // Load initial data
+        fetchData();
+    </script>
 </body>
 </html>
